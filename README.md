@@ -88,12 +88,5 @@ CoacdNative.Parameters parameters = new CoacdNative.Parameters(
 );
 ```
 
-The standalone native smoke test can be run without a test framework:
-
-```powershell
-javac --release 11 -d out src\main\java\io\github\nivalis9\coacd\CoacdNative.java src\test\java\io\github\nivalis9\coacd\CoacdNativeSmokeTest.java
-java --enable-native-access=ALL-UNNAMED -Dcoacd.library.path="build\Release\coacd_jni.dll" -cp out io.github.nivalis9.coacd.CoacdNativeSmokeTest
-```
-
 The `--enable-native-access` option suppresses the native-access warning on
 recent JDKs. It is not needed on JDK 11.
