@@ -5,13 +5,18 @@ flat arrays (`x, y, z, ...` and `i, j, k, ...`).
 
 ## Build
 
-Requirements: JDK 11+, CMake 3.24+, and a C++20 compiler. From this directory:
+CoACD 1.0.14 and its pinned CDT headers are included under `vendor/CoACD`.
+Requirements are JDK 11+, CMake 3.24+, and a C++20 compiler. From this
+directory:
 
 ```powershell
-cmake -S . -B build -DCOACD_SOURCE_DIR="..\CoACD-1.0.14"
+cmake -S . -B build
 cmake --build build --config Release --target coacd_jni
 mvn package
 ```
+
+An alternate CoACD checkout can still be selected with
+`-DCOACD_SOURCE_DIR="C:\path\to\CoACD"`.
 
 The checked-in JNI header can be regenerated after changing native Java method
 signatures with `javac --release 11 -h native -d out` followed by the Java
@@ -28,13 +33,6 @@ java --enable-native-access=ALL-UNNAMED -Dcoacd.library.path="C:\full\path\to\co
 ```
 
 Linux and macOS use the corresponding `libcoacd_jni.so` or `libcoacd_jni.dylib`.
-
-If the CoACD checkout came from a source archive and `3rd/cdt` is empty, fetch
-the dependency declared by CoACD before configuring:
-
-```powershell
-git clone --depth 1 https://github.com/artem-ogre/CDT.git ..\CoACD-1.0.14\3rd\cdt
-```
 
 ## Usage
 
