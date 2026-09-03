@@ -10,12 +10,11 @@ namespace coacd
 
         std::shared_ptr<spdlog::logger> get()
         {
-            static std::shared_ptr<spdlog::logger> logger;
-            if (!logger)
-            {
-                logger = spdlog::stdout_color_mt("CoACD");
-                logger->set_level(spdlog::level::info);
-            }
+            static std::shared_ptr<spdlog::logger> logger = [] {
+                auto instance = spdlog::stdout_color_mt("CoACD");
+                instance->set_level(spdlog::level::info);
+                return instance;
+            }();
             return logger;
         }
     } // namespace log

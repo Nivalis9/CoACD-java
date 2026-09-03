@@ -32,7 +32,7 @@ namespace coacd
   void ExtrudeCH(Model &ch, Plane overlap_plane, Params &params, double margin = 0.01);
   void ExtrudeConvexHulls(vector<Model> &cvxs, Params &params, double eps = 1e-4);
       vector<Model> Compute(Model &mesh, Params &params);
-  bool IsManifold(Model &input);
+  bool IsManifold(Model &input, const Params *params = nullptr);
 
   inline void addNeighbor(map<pair<int, int>, pair<int, int>> &edge_map, pair<int, int> &edge, vector<int> &neighbors, int idx)
   {

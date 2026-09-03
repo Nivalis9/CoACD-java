@@ -1,7 +1,12 @@
 package io.github.nivalis9.coacd;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.Locale;
 import java.util.Objects;
 
 /** Java bindings for CoACD (Approximate Convex Decomposition). */
@@ -14,8 +19,15 @@ public final class CoacdNative {
         private final int[] triangles;
 
         public Mesh(double[] vertices, int[] triangles) {
-            this.vertices = Objects.requireNonNull(vertices, "vertices").clone();
-            this.triangles = Objects.requireNonNull(triangles, "triangles").clone();
+            this(vertices, triangles, false);
+        }
+
+        /** Used by JNI to transfer ownership of newly allocated Java arrays. */
+        private Mesh(double[] vertices, int[] triangles, boolean trustedNativeOutput) {
+            Objects.requireNonNull(vertices, "vertices");
+            Objects.requireNonNull(triangles, "triangles");
+            this.vertices = trustedNativeOutput ? vertices : vertices.clone();
+            this.triangles = trustedNativeOutput ? triangles : triangles.clone();
             validateMesh(this.vertices, this.triangles);
         }
 
@@ -175,6 +187,7 @@ public final class CoacdNative {
     public static Mesh[] decompose(Mesh input, Parameters parameters) {
         Objects.requireNonNull(input, "input");
         Objects.requireNonNull(parameters, "parameters");
+        ensureNativeLoaded();
         return NativeBindings.decompose(
                 input.vertices, input.triangles, parameters.threshold,
                 parameters.maxConvexHulls, parameters.preprocessMode.nativeValue,
@@ -202,6 +215,7 @@ public final class CoacdNative {
             default:
                 throw new IllegalArgumentException("invalid CoACD log level: " + level);
         }
+        ensureNativeLoaded();
         NativeBindings.setLogLevel(level);
     }
 
@@ -242,9 +256,32 @@ public final class CoacdNative {
                 || !Double.isFinite(maxZ + minZ)) {
             throw new IllegalArgumentException("mesh bounding box cannot be normalized safely");
         }
-        for (int index : triangles) {
-            if (index < 0 || index >= vertexCount) {
-                throw new IllegalArgumentException("triangle index out of range: " + index);
+        for (int i = 0; i < triangles.length; i += 3) {
+            int i0 = triangles[i];
+            int i1 = triangles[i + 1];
+            int i2 = triangles[i + 2];
+            if (i0 < 0 || i0 >= vertexCount || i1 < 0 || i1 >= vertexCount
+                    || i2 < 0 || i2 >= vertexCount) {
+                throw new IllegalArgumentException("triangle index out of range at triangle " + (i / 3));
+            }
+            if (i0 == i1 || i1 == i2 || i2 == i0) {
+                throw new IllegalArgumentException("triangle " + (i / 3) + " repeats a vertex index");
+            }
+
+            // Normalize first so cross products cannot overflow for otherwise valid coordinates.
+            double abX = (vertices[3 * i1] - vertices[3 * i0]) / extent;
+            double abY = (vertices[3 * i1 + 1] - vertices[3 * i0 + 1]) / extent;
+            double abZ = (vertices[3 * i1 + 2] - vertices[3 * i0 + 2]) / extent;
+            double acX = (vertices[3 * i2] - vertices[3 * i0]) / extent;
+            double acY = (vertices[3 * i2 + 1] - vertices[3 * i0 + 1]) / extent;
+            double acZ = (vertices[3 * i2 + 2] - vertices[3 * i0 + 2]) / extent;
+            double crossX = Math.fma(abY, acZ, -abZ * acY);
+            double crossY = Math.fma(abZ, acX, -abX * acZ);
+            double crossZ = Math.fma(abX, acY, -abY * acX);
+            double areaSquared = Math.fma(crossX, crossX,
+                    Math.fma(crossY, crossY, crossZ * crossZ));
+            if (!Double.isFinite(areaSquared) || areaSquared <= 1.0e-30) {
+                throw new IllegalArgumentException("triangle " + (i / 3) + " has zero or unstable area");
             }
         }
     }
@@ -273,17 +310,75 @@ public final class CoacdNative {
         }
     }
 
-    private static final class NativeBindings {
-        static {
+    private static final Object NATIVE_LOAD_LOCK = new Object();
+    private static volatile boolean nativeLoaded;
+
+    private static void ensureNativeLoaded() {
+        if (nativeLoaded) return;
+        synchronized (NATIVE_LOAD_LOCK) {
+            if (nativeLoaded) return;
             String explicitPath = System.getProperty("coacd.library.path");
             if (explicitPath == null || explicitPath.trim().isEmpty()) {
-                System.loadLibrary("coacd_jni");
+                loadByNameWithClassLoaderFallback();
             } else {
-                Path path = Paths.get(explicitPath).toAbsolutePath().normalize();
-                System.load(path.toString());
+                loadPathWithClassLoaderFallback(Paths.get(explicitPath).toAbsolutePath().normalize());
             }
+            nativeLoaded = true;
         }
+    }
 
+    private static void loadByNameWithClassLoaderFallback() {
+        try {
+            System.loadLibrary("coacd_jni");
+        } catch (UnsatisfiedLinkError firstFailure) {
+            if (!isClassLoaderConflict(firstFailure)) throw firstFailure;
+            Path library = findLibraryOnJavaPath(System.mapLibraryName("coacd_jni"));
+            if (library == null) throw firstFailure;
+            loadPrivateCopy(library, firstFailure);
+        }
+    }
+
+    private static void loadPathWithClassLoaderFallback(Path library) {
+        try {
+            System.load(library.toString());
+        } catch (UnsatisfiedLinkError firstFailure) {
+            if (!isClassLoaderConflict(firstFailure)) throw firstFailure;
+            loadPrivateCopy(library, firstFailure);
+        }
+    }
+
+    private static boolean isClassLoaderConflict(UnsatisfiedLinkError error) {
+        String message = error.getMessage();
+        return message != null
+                && message.toLowerCase(Locale.ROOT).contains("another classloader");
+    }
+
+    private static Path findLibraryOnJavaPath(String fileName) {
+        String searchPath = System.getProperty("java.library.path", "");
+        for (String entry : searchPath.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+            if (entry.isEmpty()) continue;
+            Path candidate = Paths.get(entry).toAbsolutePath().normalize().resolve(fileName);
+            if (Files.isRegularFile(candidate)) return candidate;
+        }
+        return null;
+    }
+
+    private static void loadPrivateCopy(Path library, UnsatisfiedLinkError firstFailure) {
+        String fileName = library.getFileName().toString();
+        int extensionStart = fileName.lastIndexOf('.');
+        String suffix = extensionStart >= 0 ? fileName.substring(extensionStart) : null;
+        try {
+            Path privateCopy = Files.createTempFile("coacd-jni-", suffix);
+            Files.copy(library, privateCopy, StandardCopyOption.REPLACE_EXISTING);
+            privateCopy.toFile().deleteOnExit();
+            System.load(privateCopy.toString());
+        } catch (IOException | UnsatisfiedLinkError fallbackFailure) {
+            firstFailure.addSuppressed(fallbackFailure);
+            throw firstFailure;
+        }
+    }
+
+    private static final class NativeBindings {
         private static native Mesh[] decompose(
                 double[] vertices, int[] triangles, double threshold,
                 int maxConvexHulls, int preprocessMode, int preprocessResolution,

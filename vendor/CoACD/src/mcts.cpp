@@ -1,5 +1,7 @@
 #include <stdint.h>
 #include "mcts.h"
+
+#include <memory>
 #include "process.h"
 
 namespace coacd
@@ -128,6 +130,7 @@ namespace coacd
     }
     State State::get_next_state_with_random_choice()
     {
+        CheckCancellation(params);
         // choose the mesh with highest score and pick one available move
         Plane cutting_plane = one_move(worst_part_idx);
         Model pos, neg, posCH, negCH;
@@ -188,24 +191,16 @@ namespace coacd
     }
     Node::~Node()
     {
+        for (Node *child : children)
+            delete child;
         if (state != NULL)
             delete state;
     }
-    Node Node::operator=(const Node &_node)
+    void Node::set_state(const State &_state)
     {
-        params = _node.params;
-        children = _node.children;
-        visit_times = _node.visit_times;
-        quality_value = _node.quality_value;
-        state = _node.state;
-        parent = _node.parent;
-
-        return (*this);
-    }
-    void Node::set_state(State _state)
-    {
-        state = new State(params);
-        *state = _state;
+        std::unique_ptr<State> replacement = std::make_unique<State>(_state);
+        delete state;
+        state = replacement.release();
     }
     State *Node::get_state()
     {
@@ -261,6 +256,7 @@ namespace coacd
 
     bool clip_by_path(Model &m, double &final_cost, Params &params, Plane &first_plane, vector<Plane> &best_path)
     {
+        CheckCancellation(params);
         int worst_idx = 0;
         vector<double> scores;
         vector<Model> parts;
@@ -296,6 +292,7 @@ namespace coacd
         int N = (int)best_path.size();
         for (int i = 1; i < N; i++)
         {
+            CheckCancellation(params);
             Model _pos, _neg, _posCH, _negCH;
             flag = Clip(parts[worst_idx], _pos, _neg, best_path[N - 1 - i], tmp);
             if (!flag)
@@ -346,6 +343,7 @@ namespace coacd
 
     bool TernaryMCTS(Model &m, Params &params, Plane &bestplane, vector<Plane> &best_path, double best_cost, bool mode, double epsilon)
     {
+        CheckCancellation(params);
         double *bbox = m.GetBBox();
         double interval;
         double minItv = 0.01;
@@ -375,6 +373,7 @@ namespace coacd
             double res = 0;
             while (left + epsilon < right && iter++ < thres)
             {
+                CheckCancellation(params);
                 Model pos1, neg1, posCH1, negCH1, pos2, neg2, posCH2, negCH2;
                 double margin = (right - left) / 3.0;
                 double m1 = left + margin;
@@ -433,6 +432,7 @@ namespace coacd
             double res = 0;
             while (left + epsilon < right && iter++ < thres)
             {
+                CheckCancellation(params);
                 Model pos1, neg1, posCH1, negCH1, pos2, neg2, posCH2, negCH2;
                 double margin = (right - left) / 3.0;
                 double m1 = left + margin;
@@ -490,6 +490,7 @@ namespace coacd
             double res = 0;
             while (left + epsilon < right && iter++ < thres)
             {
+                CheckCancellation(params);
                 Model pos1, neg1, posCH1, negCH1, pos2, neg2, posCH2, negCH2;
                 double margin = (right - left) / 3.0;
                 double m1 = left + margin;
@@ -538,6 +539,7 @@ namespace coacd
     }
     void RefineMCTS(Model &m, Params &params, Plane &bestplane, vector<Plane> &best_path, double best_cost, double epsilon)
     {
+        CheckCancellation(params);
         double *bbox = m.GetBBox();
         double downsample;
         double interval = 0.01;
@@ -552,6 +554,7 @@ namespace coacd
             double min_cost = INF;
             for (double i = left; i <= right; i += interval)
             {
+                CheckCancellation(params);
                 double E;
                 Plane pl = Plane(1.0, 0.0, 0.0, -i);
                 flag = clip_by_path(m, E, params, pl, best_path);
@@ -572,6 +575,7 @@ namespace coacd
             double min_cost = INF;
             for (double i = left; i <= right; i += interval)
             {
+                CheckCancellation(params);
                 double E;
                 Plane pl = Plane(0.0, 1.0, 0.0, -i);
                 flag = clip_by_path(m, E, params, pl, best_path);
@@ -592,6 +596,7 @@ namespace coacd
             double min_cost = INF;
             for (double i = left; i <= right; i += interval)
             {
+                CheckCancellation(params);
                 double E;
                 Plane pl = Plane(0.0, 0.0, 1.0, -i);
                 flag = clip_by_path(m, E, params, pl, best_path);
@@ -635,6 +640,7 @@ namespace coacd
 
     bool ComputeBestRvClippingPlane(Model &m, Params &params, vector<Plane> &planes, Plane &bestplane, double &bestcost)
     {
+        CheckCancellation(params);
         if ((int)planes.size() == 0)
             return false;
         double H_min = INF;
@@ -642,6 +648,7 @@ namespace coacd
         bool flag;
         for (int i = 0; i < (int)planes.size(); i++)
         {
+            CheckCancellation(params);
             Model pos, neg, posCH, negCH;
 
             flag = Clip(m, pos, neg, planes[i], cut_area);
@@ -708,6 +715,7 @@ namespace coacd
 
     double default_policy(Node *node, Params &params, vector<Plane> &current_path) // evaluate the quality until the mesh is all cut MAX_ROUND times
     {
+        CheckCancellation(params);
         State *original_state = node->get_state();
         State current_state = *original_state;
         double current_state_reward;
@@ -715,6 +723,7 @@ namespace coacd
 
         while (current_state.is_terminal() == false)
         {
+            CheckCancellation(params);
             vector<Plane> planes;
             Plane bestplane;
             double bestcost, cut_area;
@@ -769,13 +778,16 @@ namespace coacd
 
     Node *expand(Node *node)
     {
+        CheckCancellation(node->params);
         State new_state = node->get_state()->get_next_state_with_random_choice();
 
-        Node *sub_node = new Node(node->params);
+        std::unique_ptr<Node> sub_node = std::make_unique<Node>(node->params);
         sub_node->set_state(new_state);
-        node->add_child(sub_node);
+        Node *result = sub_node.get();
+        node->add_child(result);
+        sub_node.release();
 
-        return sub_node;
+        return result;
     }
 
     Node *best_child(Node *node, bool is_exploration, double initial_cost)
@@ -830,23 +842,13 @@ namespace coacd
 
     void free_tree(Node *root, int idx)
     {
-        if (root->get_children().size() == 0)
-        {
-            delete root;
-            return;
-        }
-
-        vector<Node *> children = root->get_children();
-        while (idx < (int)children.size())
-        {
-            free_tree(children[idx++], 0);
-        }
+        (void)idx;
         delete root;
-        return;
     }
 
     Node *MonteCarloTreeSearch(Params &params, Node *node, vector<Plane> &best_path)
     {
+        CheckCancellation(params);
         int computation_budget = params.mcts_iteration;
         Model initial_mesh = node->get_state()->current_parts[0].current_mesh, initial_ch;
         initial_mesh.ComputeAPX(initial_ch);
@@ -855,6 +857,7 @@ namespace coacd
 
         for (int i = 0; i < computation_budget; i++)
         {
+            CheckCancellation(params);
             current_path.clear();
             bool flag = false;
             Node *expand_node = tree_policy(node, cost, flag);

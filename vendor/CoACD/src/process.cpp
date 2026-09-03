@@ -4,13 +4,16 @@
 #include "bvh.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <exception>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <vector>
 
 #if defined(WITH_STD_THREADS)
 #include <thread>
-#include <mutex>
 #include <chrono>
 #endif
 
@@ -18,8 +21,12 @@ namespace coacd
 {
     thread_local std::mt19937 random_engine;
 
-    bool IsManifold(Model &input)
+    bool IsManifold(Model &input, const Params *params)
     {
+        auto check_cancellation = [params]() {
+            if (params != nullptr) CheckCancellation(*params);
+        };
+        check_cancellation();
         logger::info(" - Manifold Check");
         clock_t start, end;
         start = clock();
@@ -28,6 +35,7 @@ namespace coacd
         map<pair<int, int>, int> edge_num;
         for (int i = 0; i < (int)input.triangles.size(); i++)
         {
+            if ((i & 1023) == 0) check_cancellation();
             int idx0 = input.triangles[i][0];
             int idx1 = input.triangles[i][1];
             int idx2 = input.triangles[i][2];
@@ -66,6 +74,7 @@ namespace coacd
 
         for (int i = 0; i < (int)edges.size(); i++)
         {
+            if ((i & 1023) == 0) check_cancellation();
             pair<int, int> oppo_edge = {edges[i].second, edges[i].first};
             if (!edge_num.contains(oppo_edge))
             {
@@ -79,8 +88,10 @@ namespace coacd
 
         // Check self-intersection
         BVH bvhTree(input);
+        check_cancellation();
         for (int i = 0; i < (int)input.triangles.size(); i++)
         {
+            if ((i & 255) == 0) check_cancellation();
             bool is_intersect = bvhTree.IntersectBVH(input.triangles[i], 0);
             if (is_intersect)
             {
@@ -94,6 +105,7 @@ namespace coacd
 
         // Check triange orientation
         double mesh_vol = MeshVolume(input);
+        check_cancellation();
         if (mesh_vol < 0)
         {
             // Reverse all the triangles
@@ -245,13 +257,17 @@ namespace coacd
 
     double MergeConvexHulls(Model &m, vector<Model> &meshs, vector<Model> &cvxs, Params &params, double epsilon, double threshold)
     {
+        CheckCancellation(params);
         logger::info(" - Merge Convex Hulls");
         size_t nConvexHulls = (size_t)cvxs.size();
         double h = 0;
 
         if (nConvexHulls > 1)
         {
-            int bound = ((((nConvexHulls - 1) * nConvexHulls)) >> 1);
+            const size_t pair_count = ((nConvexHulls - 1) * nConvexHulls) >> 1;
+            if (pair_count > static_cast<size_t>((std::numeric_limits<int>::max)()))
+                throw std::length_error("Too many convex hull pairs to merge safely");
+            int bound = static_cast<int>(pair_count);
             // The cost of a merge is measured between the merged hull and the
             // union of the two parts' original meshes, so it always states how
             // concave the resulting hull is with respect to the geometry it has
@@ -267,6 +283,7 @@ namespace coacd
             costMatrix.resize(bound); // only keeps the top half of the matrix
 
             auto process_index = [&](int idx) {
+                CheckCancellation(params);
                 // Sampling inside ComputeHCost draws from the thread-local
                 // engine; reseed per pair so the cost does not depend on what
                 // this worker thread happened to process before.
@@ -292,19 +309,37 @@ namespace coacd
             };
 
 #if defined(_OPENMP)
-            // Use high-performance OpenMP parallel loop (variables are shared explicitly to support legacy GCC compilers).
-            #pragma omp parallel for default(none) shared(bound, process_index, costMatrix, cvxs, params, threshold, partMeshs)
+            // OpenMP does not permit C++ exceptions to escape a parallel region.
+            // Capture the first exception and rethrow it after the implicit join.
+            std::atomic_bool parallel_failed{false};
+            std::exception_ptr parallel_exception;
+            std::mutex parallel_exception_mutex;
+            #pragma omp parallel for default(none) shared(bound, process_index, parallel_failed, parallel_exception, parallel_exception_mutex)
             for (int idx = 0; idx < bound; ++idx)
             {
-            	process_index(idx);
+                if (parallel_failed.load(std::memory_order_relaxed))
+                    continue;
+                try
+                {
+                    process_index(idx);
+                }
+                catch (...)
+                {
+                    std::lock_guard<std::mutex> lock(parallel_exception_mutex);
+                    if (!parallel_exception)
+                        parallel_exception = std::current_exception();
+                    parallel_failed.store(true, std::memory_order_relaxed);
+                }
             }
+            if (parallel_exception)
+                std::rethrow_exception(parallel_exception);
 #elif defined(WITH_STD_THREADS)
             // Fallback to standard library multi-threading when explicitly requested.
             unsigned int num_threads = std::thread::hardware_concurrency();
             if (num_threads == 0) num_threads = 4; // Thread count bounds fallback
             num_threads = std::min(static_cast<unsigned int>(bound), num_threads);
             
-            std::vector<std::thread> threads;
+            std::vector<std::jthread> threads;
             threads.reserve(num_threads);
             std::vector<std::exception_ptr> exceptions(num_threads);
             int chunk_size = (bound + num_threads - 1) / num_threads;
@@ -352,6 +387,7 @@ namespace coacd
 
             while (true)
             {
+                CheckCancellation(params);
                 // Search for lowest cost
                 double bestCost = INF;
                 const int32_t addr = FindMinimumElement(costMatrix, &bestCost, 0, (int32_t)costMatrix.size());
@@ -494,9 +530,11 @@ namespace coacd
 
     void ExtrudeConvexHulls(vector<Model> &cvxs, Params &params, double eps)
     {
+        CheckCancellation(params);
         logger::info(" - Extrude Convex Hulls");
         for (int i = 0; i < (int)cvxs.size(); i++)
         {
+            CheckCancellation(params);
             Model cvx = cvxs[i];
             for (int j = 0; j < (int)cvxs.size(); j++)
             {
@@ -520,6 +558,7 @@ namespace coacd
 
     vector<Model> Compute(Model &mesh, Params &params)
     {
+        CheckCancellation(params);
         vector<Model> InputParts = {mesh};
         vector<Model> parts, pmeshs;
 
@@ -540,6 +579,7 @@ namespace coacd
         size_t iter = 0;
         while ((int)InputParts.size() > 0)
         {
+            CheckCancellation(params);
             vector<Model> tmp;
             logger::info("iter {} ---- waiting pool: {}", iter, InputParts.size());
 
@@ -551,6 +591,7 @@ namespace coacd
             vector<Model> done_ch(num_inputs), done_mesh(num_inputs);
             vector<char> has_pos(num_inputs, 0), has_neg(num_inputs, 0), done(num_inputs, 0);
             auto process_mesh_part = [&](int p) {
+                CheckCancellation(params);
                 double local_cut_area;
                 random_engine.seed(params.seed);
                 if (p % (num_inputs / 10 + 1) == 0)
@@ -566,23 +607,20 @@ namespace coacd
                     vector<Plane> planes, best_path;
 
                     // MCTS for cutting plane
-                    Node *node = new Node(params);
+                    std::unique_ptr<Node> node = std::make_unique<Node>(params);
                     State state(params, pmesh);
                     node->set_state(state);
-                    Node *best_next_node = MonteCarloTreeSearch(params, node, best_path);
+                    Node *best_next_node = MonteCarloTreeSearch(params, node.get(), best_path);
                     if (best_next_node == NULL)
                     {
                         done_ch[p] = pCH;
                         done_mesh[p] = pmesh;
                         done[p] = 1;
-                        free_tree(node, 0);
                     }
                     else
                     {
                         bestplane = best_next_node->state->current_value.first;
                         TernaryMCTS(pmesh, params, bestplane, best_path, best_next_node->quality_value); // using Rv to Ternary refine
-                        free_tree(node, 0);
-
                         Model pos, neg;
                         bool clipf = Clip(pmesh, pos, neg, bestplane, local_cut_area);
                         if (!clipf)
@@ -611,17 +649,34 @@ namespace coacd
             };
 
 #if defined(_OPENMP)
-            #pragma omp parallel for default(none) shared(num_inputs, process_mesh_part)
+            std::atomic_bool parallel_failed{false};
+            std::exception_ptr parallel_exception;
+            std::mutex parallel_exception_mutex;
+            #pragma omp parallel for default(none) shared(num_inputs, process_mesh_part, parallel_failed, parallel_exception, parallel_exception_mutex)
             for (int p = 0; p < num_inputs; p++)
             {
-            	process_mesh_part(p);
+                if (parallel_failed.load(std::memory_order_relaxed))
+                    continue;
+                try
+                {
+                    process_mesh_part(p);
+                }
+                catch (...)
+                {
+                    std::lock_guard<std::mutex> lock(parallel_exception_mutex);
+                    if (!parallel_exception)
+                        parallel_exception = std::current_exception();
+                    parallel_failed.store(true, std::memory_order_relaxed);
+                }
             }
+            if (parallel_exception)
+                std::rethrow_exception(parallel_exception);
 #elif defined(WITH_STD_THREADS)
             unsigned int num_threads = std::thread::hardware_concurrency();
             if (num_threads == 0) num_threads = 4;
             num_threads = std::min(static_cast<unsigned int>(num_inputs), num_threads);
 
-            std::vector<std::thread> threads;
+            std::vector<std::jthread> threads;
             threads.reserve(num_threads);
             std::vector<std::exception_ptr> exceptions(num_threads);
             int chunk_size = (num_inputs + num_threads - 1) / num_threads;
@@ -655,6 +710,7 @@ namespace coacd
 #else
             for (int p = 0; p < num_inputs; p++)
             {
+                CheckCancellation(params);
             	process_mesh_part(p);
             }
 #endif

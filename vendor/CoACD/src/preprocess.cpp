@@ -4,8 +4,14 @@
 
 namespace coacd
 {
-    void SDFManifold(Model &input, Model &output, double scale, double level_set)
+    void SDFManifold(Model &input, Model &output, double scale, double level_set,
+                     const std::atomic_bool *cancellation_requested)
     {
+        auto check_cancellation = [cancellation_requested]() {
+            if (cancellation_requested != nullptr &&
+                cancellation_requested->load(std::memory_order_relaxed))
+                throw std::runtime_error("CoACD operation cancelled");
+        };
         std::vector<Vec3s> points;
         std::vector<Vec3I> tris;
         std::vector<Vec4I> quads;
@@ -18,35 +24,43 @@ namespace coacd
 
         for (unsigned int i = 0; i < input.points.size(); ++i)
         {
+            if ((i & 1023U) == 0) check_cancellation();
             points.push_back({(float)(input.points[i][0] * scale), (float)(input.points[i][1] * scale), (float)(input.points[i][2] * scale)});
         }
         for (unsigned int i = 0; i < input.triangles.size(); ++i)
         {
+            if ((i & 1023U) == 0) check_cancellation();
             tris.push_back({(unsigned int)input.triangles[i][0], (unsigned int)input.triangles[i][1], (unsigned int)input.triangles[i][2]});
         }
 
+        check_cancellation();
         math::Transform::Ptr xform = math::Transform::createLinearTransform();
         tools::QuadAndTriangleDataAdapter<Vec3s, Vec3I> mesh(points, tris);
 
         DoubleGrid::Ptr sgrid = tools::meshToSignedDistanceField<DoubleGrid>(
             *xform, points, tris, quads, 3.0, 3.0);
 
+        check_cancellation();
         std::vector<Vec3s> newPoints;
         std::vector<Vec3I> newTriangles;
         std::vector<Vec4I> newQuads;
         tools::volumeToMesh(*sgrid, newPoints, newTriangles, newQuads, level_set);
 
+        check_cancellation();
         output.Clear();
         for (unsigned int i = 0; i < newPoints.size(); ++i)
         {
+            if ((i & 1023U) == 0) check_cancellation();
             output.points.push_back({newPoints[i][0] / scale, newPoints[i][1] / scale, newPoints[i][2] / scale});
         }
         for (unsigned int i = 0; i < newTriangles.size(); ++i)
         {
+            if ((i & 1023U) == 0) check_cancellation();
             output.triangles.push_back({(int)newTriangles[i][0], (int)newTriangles[i][2], (int)newTriangles[i][1]});
         }
         for (unsigned int i = 0; i < newQuads.size(); ++i)
         {
+            if ((i & 1023U) == 0) check_cancellation();
             output.triangles.push_back({(int)newQuads[i][0], (int)newQuads[i][2], (int)newQuads[i][1]});
             output.triangles.push_back({(int)newQuads[i][0], (int)newQuads[i][3], (int)newQuads[i][2]});
         }
@@ -57,9 +71,12 @@ namespace coacd
 
     void ManifoldPreprocess(Params &params, Model &m)
     {
+        CheckCancellation(params);
         Model tmp = m;
         m.Clear();
-        SDFManifold(tmp, m, params.prep_resolution, params.dmc_thres);
+        SDFManifold(tmp, m, params.prep_resolution, params.dmc_thres,
+                    params.cancellation_requested);
+        CheckCancellation(params);
     }
 
 }

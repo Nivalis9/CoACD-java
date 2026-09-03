@@ -10,6 +10,7 @@
 #endif
 #else
 #include <iostream>
+#include <mutex>
 #endif
 #include <string_view>
 namespace coacd
@@ -20,9 +21,16 @@ namespace coacd
         #ifndef DISABLE_SPDLOG
         std::shared_ptr<spdlog::logger> get();
         #else
+        inline std::mutex &outputMutex()
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
         template <typename Arg, typename... Args>
         void doPrint(std::ostream& out, Arg&& arg, Args&&... args)
         {
+            std::lock_guard<std::mutex> lock(outputMutex());
             out << std::forward<Arg>(arg);
             using expander = int[];
             (void)expander{0, (void(out << ',' << std::forward<Args>(args)), 0)...};

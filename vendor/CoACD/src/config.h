@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <iostream>
 #include <string>
 #include <fstream>
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <assert.h>
 #include <regex>
+#include <stdexcept>
 
 #include "shape.h"
 
@@ -41,6 +43,7 @@ namespace coacd
     bool extrude;
     double extrude_margin;
     bool real_metric;
+    const std::atomic_bool *cancellation_requested;
 
     /////////////// MCTS Config ///////////////
     int mcts_iteration;
@@ -67,10 +70,18 @@ namespace coacd
       extrude = false;
       extrude_margin = 0.01;
       real_metric = false;
+      cancellation_requested = nullptr;
 
       mcts_iteration = 150;
       mcts_max_depth = 3;
       max_convex_hull = -1;
     }
   };
+
+  inline void CheckCancellation(const Params &params)
+  {
+    if (params.cancellation_requested != nullptr &&
+        params.cancellation_requested->load(std::memory_order_relaxed))
+      throw std::runtime_error("CoACD operation cancelled");
+  }
 }

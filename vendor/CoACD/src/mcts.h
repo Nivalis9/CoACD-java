@@ -95,8 +95,9 @@ namespace coacd
 
     Node(Params _params);
     ~Node();
-    Node operator=(const Node &_node);
-    void set_state(State _state);
+    Node(const Node &) = delete;
+    Node &operator=(const Node &) = delete;
+    void set_state(const State &_state);
     State *get_state();
     void set_parent(Node *_parent);
     Node *get_parent();

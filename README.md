@@ -26,6 +26,14 @@ CoACD builds third-party preprocessing support by default. To make a smaller
 build that only accepts manifold input, add `-DWITH_3RD_PARTY_LIBS=OFF` to the
 configure command.
 
+JNI calls are safe from multiple Java threads, but decompositions are queued
+within each loaded native library because a single CoACD operation already uses
+native parallelism and a large working set. Interrupting a Java thread running
+`decompose` requests cooperative cancellation and results in a
+`java.util.concurrent.CancellationException`; the thread's interrupted status
+is preserved. Cancellation can be delayed while an individual third-party
+preprocessing operation is inside OpenVDB.
+
 At runtime, put `coacd_jni` on `java.library.path`, or pass its full path:
 
 ```powershell

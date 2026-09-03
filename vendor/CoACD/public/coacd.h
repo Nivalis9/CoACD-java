@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <array>
 #include <cstdint>
 #include <string>
@@ -33,6 +34,15 @@ COACD_API std::vector<Mesh> CoACD(Mesh const &input, double threshold = 0.05,
                         bool extrude = false, double extrude_margin = 0.01,
                         std::string apx_mode = "ch", unsigned int seed = 0,
                         bool real_metric = false);
+COACD_API std::vector<Mesh> CoACDWithCancellation(
+                        Mesh input, double threshold,
+                        int max_convex_hull, std::string preprocess,
+                        int prep_resolution, int sample_resolution,
+                        int mcts_nodes, int mcts_iteration,
+                        int mcts_max_depth, bool pca, bool merge, bool decimate,
+                        int max_ch_vertex, bool extrude, double extrude_margin,
+                        std::string apx_mode, unsigned int seed, bool real_metric,
+                        std::atomic_bool const *cancellation_requested);
 COACD_API void set_log_level(std::string_view level);
 
 } // namespace coacd

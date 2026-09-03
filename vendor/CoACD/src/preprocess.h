@@ -19,6 +19,8 @@ using namespace openvdb;
 
 namespace coacd
 {
-    void SDFManifold(Model &input, Model &output, double scale = 50.0f, double level_set = 0.55f);
+    void SDFManifold(Model &input, Model &output, double scale = 50.0f,
+                     double level_set = 0.55f,
+                     const std::atomic_bool *cancellation_requested = nullptr);
     void ManifoldPreprocess(Params &params, Model &m);
 }

@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <mutex>
+#include <utility>
 #include "model_obj.h"
 #include "process.h"
 #include "quickhull/QuickHull.hpp"
@@ -354,6 +355,8 @@ namespace coacd
         {
             aObj += Area(points[triangles[i][0]], points[triangles[i][1]], points[triangles[i][2]]);
         }
+        if (!std::isfinite(aObj) || aObj <= std::numeric_limits<double>::epsilon())
+            throw std::runtime_error("Cannot sample a mesh with zero or invalid surface area");
 
         if (base != 0)
             resolution = size_t(max(1000, int(resolution * (aObj / base))));
@@ -415,6 +418,8 @@ namespace coacd
             a1 += Area(convex1.points[convex1.triangles[i][0]], convex1.points[convex1.triangles[i][1]], convex1.points[convex1.triangles[i][2]]);
         for (int i = 0; i < (int)convex2.triangles.size(); i++)
             a2 += Area(convex2.points[convex2.triangles[i][0]], convex2.points[convex2.triangles[i][1]], convex2.points[convex2.triangles[i][2]]);
+        if (!std::isfinite(a1 + a2) || a1 + a2 <= std::numeric_limits<double>::epsilon())
+            throw std::runtime_error("Cannot sample meshes with zero or invalid surface area");
 
         Plane overlap_plane;
         bool flag = ComputeOverlapFace(convex1, convex2, overlap_plane);
@@ -436,6 +441,8 @@ namespace coacd
             a1 += Area(convex1.points[convex1.triangles[i][0]], convex1.points[convex1.triangles[i][1]], convex1.points[convex1.triangles[i][2]]);
         for (int i = 0; i < (int)convex2.triangles.size(); i++)
             a2 += Area(convex2.points[convex2.triangles[i][0]], convex2.points[convex2.triangles[i][1]], convex2.points[convex2.triangles[i][2]]);
+        if (!std::isfinite(a1 + a2) || a1 + a2 <= std::numeric_limits<double>::epsilon())
+            throw std::runtime_error("Cannot sample meshes with zero or invalid surface area");
 
         Plane overlap_plane;
         bool flag = ComputeOverlapFace(convex1, convex2, overlap_plane);
@@ -558,8 +565,10 @@ namespace coacd
         return true;
     }
 
-    bool Model::Load(vector<vec3d> vertices, vector<vec3i> face_indices)
+    bool Model::Load(const vector<vec3d> &vertices, const vector<vec3i> &face_indices)
     {
+        points.reserve(points.size() + vertices.size());
+        triangles.reserve(triangles.size() + face_indices.size());
         double x_min = INF, x_max = -INF, y_min = INF, y_max = -INF, z_min = INF, z_max = -INF;
         for (int i = 0; i < (int)vertices.size(); ++i)
         {
@@ -585,6 +594,30 @@ namespace coacd
             triangles.push_back({face_indices[i][0], face_indices[i][1], face_indices[i][2]});
         }
 
+        return true;
+    }
+
+    bool Model::Load(vector<vec3d> &&vertices, vector<vec3i> &&face_indices)
+    {
+        points = std::move(vertices);
+        triangles = std::move(face_indices);
+
+        double x_min = INF, x_max = -INF, y_min = INF, y_max = -INF, z_min = INF, z_max = -INF;
+        for (const vec3d &vertex : points)
+        {
+            x_min = min(x_min, vertex[0]);
+            x_max = max(x_max, vertex[0]);
+            y_min = min(y_min, vertex[1]);
+            y_max = max(y_max, vertex[1]);
+            z_min = min(z_min, vertex[2]);
+            z_max = max(z_max, vertex[2]);
+        }
+        bbox[0] = x_min;
+        bbox[1] = x_max;
+        bbox[2] = y_min;
+        bbox[3] = y_max;
+        bbox[4] = z_min;
+        bbox[5] = z_max;
         return true;
     }
 

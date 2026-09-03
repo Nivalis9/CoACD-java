@@ -210,8 +210,8 @@ namespace coacd
         map<int, bool> overlap_map;
         const int v_lenth = (int)border.size();
         const int f_lenth = (int)border_triangles.size();
-        bool *add_vertex = new bool[v_lenth]();
-        bool *remove_map = new bool[f_lenth]();
+        vector<char> add_vertex(static_cast<size_t>(v_lenth), 0);
+        vector<char> remove_map(static_cast<size_t>(f_lenth), 0);
 
         for (int i = 0; i < (int)overlap.size(); i++)
             for (int j = 0; j < (int)border.size(); j++)
@@ -413,8 +413,6 @@ namespace coacd
                 vertex_map[i + 1] = ++index;
             }
         }
-        delete[] add_vertex;
-        delete[] remove_map;
     }
 
     bool Clip(const Model &mesh, Model &pos, Model &neg, Plane &plane, double &cut_area, bool foo)
