@@ -1,0 +1,7 @@
+/build/
+/build-*/
+/out/
+/target/
+*.dll
+*.dylib
+*.so

@@ -1,0 +1,6 @@
+# Compatibility input for CoACD 1.0.14 when it is consumed with add_subdirectory.
+# That release resolves this file relative to the top-level source directory.
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/CoACDTargets.cmake")
+check_required_components(CoACD)
