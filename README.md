@@ -12,7 +12,7 @@ directory:
 ```powershell
 cmake -S . -B build
 cmake --build build --config Release --target coacd_jni
-mvn package
+.\gradlew.bat build
 ```
 
 An alternate CoACD checkout can still be selected with
@@ -37,10 +37,30 @@ preprocessing operation is inside OpenVDB.
 At runtime, put `coacd_jni` on `java.library.path`, or pass its full path:
 
 ```powershell
-java --enable-native-access=ALL-UNNAMED -Dcoacd.library.path="C:\full\path\to\coacd_jni.dll" -cp target\coacd-java-1.0.14-SNAPSHOT.jar YourMainClass
+java --enable-native-access=ALL-UNNAMED -Dcoacd.library.path="C:\full\path\to\coacd_jni.dll" -cp build\libs\coacd-java-1.0.0.jar YourMainClass
 ```
 
 Linux and macOS use the corresponding `libcoacd_jni.so` or `libcoacd_jni.dylib`.
+
+## JitPack
+
+Releases and commits can be consumed through JitPack. Add the repository and
+dependency to the consuming Gradle build:
+
+```kotlin
+repositories {
+    mavenCentral()
+    maven { url = uri("https://jitpack.io") }
+}
+
+dependencies {
+    implementation("com.github.Nivalis9:CoACD-java:1.0.0")
+}
+```
+
+Replace `1.0.0` with the Git tag or commit hash to consume. The native library
+must still be built with CMake and supplied through `java.library.path` or the
+`coacd.library.path` system property.
 
 ## Usage
 
